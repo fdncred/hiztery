@@ -11,9 +11,9 @@ struct Args {
 #[derive(StructOpt)]
 enum HizteryCmd {
     Add { history_item: String },
-    Upd { history_id: u64 },
-    Del { history_id: u64 },
-    Lst {},
+    Update { history_id: u64 },
+    Delete { history_id: u64 },
+    Select {},
 }
 
 #[async_std::main]
@@ -22,7 +22,59 @@ async fn main(args: Args) -> anyhow::Result<()> {
     // let db_url = env::var("DATABASE_URL").unwrap_or("sqlite:hiztery.db?mode=rwc".to_string());
     // let pool = SqlitePool::connect(&db_url).await?;
     let pool = SqlitePool::connect("sqlite:hiztery.db?mode=rwc").await?;
+    initialize_db(&pool).await?;
 
+    match args.cmd {
+        Some(HizteryCmd::Add { history_item }) => {
+            for x in 1000..2000 {
+                let hist_item_clone = history_item.clone();
+                // print!("Adding new history item description '{}'", &hist_item_clone);
+                let start_time = Local::now();
+                // println!("formatting time");
+                let formatted_start_time = start_time.format("%Y-%m-%d %H:%M:%S").to_string();
+                // println!("running add_bogus_entry");
+                let history_id =
+                    add_bogus_entry(&pool, x, &hist_item_clone, formatted_start_time).await?;
+                // println!("calculating end time");
+                let end_time = Local::now();
+                // println!("calculating duration");
+                // let insert_ms = (end_time - start_time);
+                let insert_time_ms = if let Some(time) = (end_time - start_time).num_microseconds()
+                {
+                    time as f64 / 1000.0 as f64
+                } else {
+                    0.0 as f64
+                };
+                print!(
+                    "Added new history entry: [{}] with id: {:?} in: {} ms.",
+                    &hist_item_clone, history_id, insert_time_ms
+                );
+                let perf_update_id = update_perf(&pool, history_id, insert_time_ms).await?;
+                println!(
+                    " Successfully updated the perf table with id: [{}]",
+                    perf_update_id
+                );
+            }
+        }
+        Some(HizteryCmd::Update { history_id }) => {
+            println!("Marking todo {} as done", history_id);
+            // if complete_todo(&pool, id).await? {
+            //     println!("Todo {} is marked as done", id);
+            // } else {
+            //     println!("Invalid id {}", id);
+            // }
+        }
+        Some(HizteryCmd::Delete { history_id }) => {}
+        Some(HizteryCmd::Select {}) | None => {
+            println!("Printing list of all todos");
+            // list_todos(&pool).await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn initialize_db(pool: &SqlitePool) -> anyhow::Result<bool> {
     let history_table = r#"
     CREATE TABLE IF NOT EXISTS "history"
     (
@@ -47,64 +99,7 @@ async fn main(args: Args) -> anyhow::Result<()> {
     sqlx::query(history_table).execute(&mut conn).await?;
     sqlx::query(performance_table).execute(&mut conn).await?;
 
-    // let populate = r#"
-    // INSERT INTO history (session_id, history_item, datetime, executions) VALUES
-    // (101, 'now is the time1', '2021-07-13 15:52:01', 1),
-    // (101, 'now is the time2', '2021-07-13 15:52:02', 1),
-    // (101, 'now is the time3', '2021-07-13 15:52:03', 1),
-    // (101, 'now is the time4', '2021-07-13 15:52:04', 1),
-    // (101, 'now is the time5', '2021-07-13 15:52:05', 1);
-    // "#;
-    // sqlx::query(populate).execute(&mut conn).await?;
-
-    match args.cmd {
-        Some(HizteryCmd::Add { history_item }) => {
-            for x in 1000..2000 {
-                let hist_item_clone = history_item.clone();
-                println!("Adding new history item description '{}'", &hist_item_clone);
-                let start_time = Local::now();
-                // println!("formatting time");
-                let formatted_start_time = start_time.format("%Y-%m-%d %H:%M:%S").to_string();
-                // println!("running add_bogus_entry");
-                let history_id =
-                    add_bogus_entry(&pool, x, hist_item_clone, formatted_start_time).await?;
-                // println!("calculating end time");
-                let end_time = Local::now();
-                // println!("calculating duration");
-                let insert_ms = end_time - start_time;
-                println!(
-                    "Added new history entry with id: {:?} in: {} ms",
-                    history_id,
-                    insert_ms.num_milliseconds()
-                );
-                let perf_update_id = update_perf(
-                    &pool,
-                    history_id,
-                    (insert_ms.num_microseconds().unwrap() as f64 / 1000.0 as f64),
-                )
-                .await?;
-                println!(
-                    "Successfully updated the perf table with id: [{}]",
-                    perf_update_id
-                );
-            }
-        }
-        Some(HizteryCmd::Upd { history_id }) => {
-            println!("Marking todo {} as done", history_id);
-            // if complete_todo(&pool, id).await? {
-            //     println!("Todo {} is marked as done", id);
-            // } else {
-            //     println!("Invalid id {}", id);
-            // }
-        }
-        Some(HizteryCmd::Del { history_id }) => {}
-        Some(HizteryCmd::Lst {}) | None => {
-            println!("Printing list of all todos");
-            // list_todos(&pool).await?;
-        }
-    }
-
-    Ok(())
+    Ok(true)
 }
 
 async fn update_perf(pool: &SqlitePool, history_id: i64, insert_ms: f64) -> anyhow::Result<i64> {
@@ -127,15 +122,15 @@ async fn update_perf(pool: &SqlitePool, history_id: i64, insert_ms: f64) -> anyh
 async fn add_bogus_entry(
     pool: &SqlitePool,
     session_id: i64,
-    history_item: String,
+    history_item: &String,
     time_str: String,
 ) -> anyhow::Result<i64> {
     let mut conn = pool.acquire().await?;
 
     // println!("creating query");
     let query = format!(
-        "INSERT INTO history (session_id, history_item, datetime, executions) VALUES (123, '{}', '{}', 1)",
-        history_item, time_str
+        "INSERT INTO history (session_id, history_item, datetime, executions) VALUES ({}, '{}', '{}', 1)",
+        session_id, history_item, time_str
     );
     // println!("executing query {}", &query);
     let id = sqlx::query(&query)
