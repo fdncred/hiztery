@@ -11,7 +11,12 @@ anyhow = "1.0"
 async-std = { version = "1.8.0", features = [ "attributes" ] }
 futures = "0.3"
 paw = "1.0"
-sqlx = { version = "0.5.5", features = ["sqlite"] }
+async-trait = "0.1.50"
+sqlx = { version = "0.5.5", features = ["sqlite", "chrono"] }
 structopt = { version = "0.3", features = ["paw"] }
 sqlx-macros = "0.5.5"
+# chrono = { version = "0.4.19", features = ["serde"] }
 chrono = "0.4.19"
+log = "0.4.14"
+eyre = "0.6.5"
+simplelog = "0.10.0"
