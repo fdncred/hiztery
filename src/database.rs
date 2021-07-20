@@ -322,12 +322,12 @@ impl Database for Sqlite {
         let res = sqlx::query(
             format!(
                 "select * from history_items h
-            where command like ?1 || '%'
-            and timestamp = (
-                    select max(timestamp) from history_items
-                    where h.command = history.command
-                )
-            order by timestamp desc {}",
+                where command like ?1 || '%'
+                and timestamp = (
+                        select max(timestamp) from history_items
+                        where h.command = history_items.command
+                    )
+                order by timestamp desc {}",
                 limit.clone()
             )
             .as_str(),

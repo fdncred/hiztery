@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![allow(unused_variables)]
 
 pub mod database;
 pub mod history_item;
@@ -7,7 +8,7 @@ use std::io::{BufReader, Read};
 use std::{fs::File, path::PathBuf};
 // use async_std::io::BufReader;
 use chrono::Local;
-use database::{Database, Sqlite};
+use database::{Database, SearchMode, Sqlite};
 use log::debug;
 use simplelog::*;
 // use eyre::Result;
@@ -25,21 +26,36 @@ struct Args {
 }
 
 #[derive(StructOpt)]
+#[structopt(about = "sql commands used with history")]
 enum HizteryCmd {
     Insert {
+        #[structopt(short = "t", long = "text")]
         history_item: String,
+        #[structopt(short = "r", long = "rows_to_insert")]
         rows_to_insert: i64,
     },
     Update {
+        #[structopt(short = "i", long = "id")]
         history_id: i64,
+        #[structopt(short = "u", long = "update_text")]
         history_item: String,
     },
     Delete {
+        #[structopt(short = "i", long = "id")]
         history_id: i64,
     },
     Select {},
     Import {
+        #[structopt(short = "f", long = "file", name = "file path")]
         nushell_history_filepath: String,
+    },
+    Search {
+        #[structopt(short = "m", long = "mode")]
+        search_mode: String,
+        #[structopt(short = "l", long = "limit")]
+        limit: Option<i64>,
+        #[structopt(short = "p", long = "phrase")]
+        phrase: String,
     },
 }
 
@@ -202,6 +218,32 @@ async fn second_attempt(args: Args) -> anyhow::Result<()> {
             };
             debug!("Imported [{}] history entries", cnt);
         }
+        Some(HizteryCmd::Search {
+            search_mode,
+            limit,
+            phrase,
+        }) => {
+            debug!(
+                "Searching with phrase: {}, limit: {:?}, mode: {}",
+                &phrase, limit, &search_mode
+            );
+            let s_mode = match search_mode.as_ref() {
+                "p" => SearchMode::Prefix,
+                "f" => SearchMode::FullText,
+                _ => SearchMode::FullText,
+            };
+
+            let result = sqlite.search(limit, s_mode, &phrase).await;
+            match result {
+                Ok(r) => {
+                    println!("Found {} hits", r.len());
+                    for (idx, hit) in r.iter().enumerate() {
+                        println!("Hit # {} History: {:?}", idx + 1, hit);
+                    }
+                }
+                _ => println!("No hits found for phrase: {}", &phrase),
+            }
+        }
     }
 
     Ok(())
@@ -292,6 +334,11 @@ async fn first_attempt(args: Args) -> anyhow::Result<()> {
         }
         Some(HizteryCmd::Import {
             nushell_history_filepath,
+        }) => {}
+        Some(HizteryCmd::Search {
+            limit,
+            phrase,
+            search_mode,
         }) => {}
     }
 
