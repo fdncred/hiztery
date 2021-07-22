@@ -23,7 +23,6 @@ impl HistoryItem {
         session_id: Option<i64>,
         timestamp: chrono::DateTime<Utc>,
     ) -> Self {
-        // let history_id = history_id.unwrap_or_else(|| -1.into());
         let session_id = session_id.unwrap_or_else(|| process::id().into());
 
         Self {

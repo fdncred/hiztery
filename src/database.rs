@@ -2,7 +2,7 @@ use crate::history_item::HistoryItem;
 use async_trait::async_trait;
 use chrono::prelude::{DateTime, TimeZone};
 use chrono::Utc;
-use eyre::Result;
+// use eyre::Result;
 use itertools::Itertools;
 use log::debug;
 use sqlx::sqlite::{
@@ -14,36 +14,33 @@ use std::str::FromStr;
 
 #[async_trait]
 pub trait Database {
-    async fn save(&mut self, h: &HistoryItem) -> Result<()>;
-    async fn save_bulk(&mut self, h: &[HistoryItem]) -> Result<()>;
-
-    async fn load(&self, id: &str) -> Result<HistoryItem>;
-    async fn list(&self, max: Option<usize>, unique: bool) -> Result<Vec<HistoryItem>>;
+    async fn save(&mut self, h: &HistoryItem) -> Result<(), sqlx::Error>;
+    async fn save_bulk(&mut self, h: &[HistoryItem]) -> Result<(), sqlx::Error>;
+    async fn load(&self, id: &str) -> Result<HistoryItem, sqlx::Error>;
+    async fn list(&self, max: Option<usize>, unique: bool)
+        -> Result<Vec<HistoryItem>, sqlx::Error>;
     async fn range(
         &self,
         from: chrono::DateTime<Utc>,
         to: chrono::DateTime<Utc>,
-    ) -> Result<Vec<HistoryItem>>;
-
-    async fn update(&self, h: &HistoryItem) -> Result<()>;
-    async fn history_count(&self) -> Result<i64>;
-
-    async fn first(&self) -> Result<HistoryItem>;
-    async fn last(&self) -> Result<HistoryItem>;
+    ) -> Result<Vec<HistoryItem>, sqlx::Error>;
+    async fn update(&self, h: &HistoryItem) -> Result<(), sqlx::Error>;
+    async fn history_count(&self) -> Result<i64, sqlx::Error>;
+    async fn first(&self) -> Result<HistoryItem, sqlx::Error>;
+    async fn last(&self) -> Result<HistoryItem, sqlx::Error>;
     async fn before(
         &self,
         timestamp: chrono::DateTime<Utc>,
         count: i64,
-    ) -> Result<Vec<HistoryItem>>;
-
+    ) -> Result<Vec<HistoryItem>, sqlx::Error>;
     async fn search(
         &self,
         limit: Option<i64>,
         search_mode: SearchMode,
         query: &str,
-    ) -> Result<Vec<HistoryItem>>;
-
-    async fn query_history(&self, query: &str) -> Result<Vec<HistoryItem>>;
+    ) -> Result<Vec<HistoryItem>, sqlx::Error>;
+    async fn query_history(&self, query: &str) -> Result<Vec<HistoryItem>, sqlx::Error>;
+    async fn delete_history_item(&self, id: i64) -> Result<u64, sqlx::Error>;
 }
 
 // Intended for use on a developer machine and not a sync server.
@@ -53,7 +50,7 @@ pub struct Sqlite {
 }
 
 impl Sqlite {
-    pub async fn new(path: impl AsRef<Path>) -> Result<Self> {
+    pub async fn new(path: impl AsRef<Path>) -> Result<Self, sqlx::Error> {
         let path = path.as_ref();
         debug!("opening sqlite database at {:?}", path);
 
@@ -75,7 +72,7 @@ impl Sqlite {
         Ok(Self { pool })
     }
 
-    async fn setup_db(pool: &SqlitePool) -> Result<()> {
+    async fn setup_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         debug!("running sqlite database setup");
 
         // sqlx::migrate!("./migrations").run(pool).await?;
@@ -112,7 +109,12 @@ impl Sqlite {
         Ok(())
     }
 
-    async fn save_raw(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, h: &HistoryItem) -> Result<()> {
+    async fn save_raw(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        h: &HistoryItem,
+    ) -> Result<(), sqlx::Error> {
+        // We don't need the history_id here because it's an auto number field
+        // so it should be ever increasing
         sqlx::query(
             "insert or ignore into history_items(timestamp, duration, exit_status, command, cwd, session_id)
                 values(?1, ?2, ?3, ?4, ?5, ?6)",
@@ -164,7 +166,7 @@ impl Sqlite {
 
 #[async_trait]
 impl Database for Sqlite {
-    async fn save(&mut self, h: &HistoryItem) -> Result<()> {
+    async fn save(&mut self, h: &HistoryItem) -> Result<(), sqlx::Error> {
         debug!("saving history to sqlite");
 
         let mut tx = self.pool.begin().await?;
@@ -174,7 +176,7 @@ impl Database for Sqlite {
         Ok(())
     }
 
-    async fn save_bulk(&mut self, h: &[HistoryItem]) -> Result<()> {
+    async fn save_bulk(&mut self, h: &[HistoryItem]) -> Result<(), sqlx::Error> {
         debug!("saving history to sqlite");
 
         let mut tx = self.pool.begin().await?;
@@ -188,7 +190,7 @@ impl Database for Sqlite {
         Ok(())
     }
 
-    async fn load(&self, id: &str) -> Result<HistoryItem> {
+    async fn load(&self, id: &str) -> Result<HistoryItem, sqlx::Error> {
         debug!("loading history item {}", id);
 
         let res = sqlx::query("select * from history_items where id = ?1")
@@ -200,13 +202,14 @@ impl Database for Sqlite {
         Ok(res)
     }
 
-    async fn update(&self, h: &HistoryItem) -> Result<()> {
+    async fn update(&self, h: &HistoryItem) -> Result<(), sqlx::Error> {
         debug!("updating sqlite history");
+        debug!("history_item = [{:?}]", &h);
 
         sqlx::query(
             "update history_items
                 set timestamp = ?2, duration = ?3, exit_status = ?4, command = ?5, cwd = ?6, session_id = ?7
-                where id = ?1",
+                where history_id = ?1",
         )
         .bind(h.history_id)
         .bind(h.timestamp.timestamp_nanos())
@@ -222,7 +225,11 @@ impl Database for Sqlite {
     }
 
     // make a unique list, that only shows the *newest* version of things
-    async fn list(&self, max: Option<usize>, unique: bool) -> Result<Vec<HistoryItem>> {
+    async fn list(
+        &self,
+        max: Option<usize>,
+        unique: bool,
+    ) -> Result<Vec<HistoryItem>, sqlx::Error> {
         debug!("listing history");
 
         // very likely vulnerable to SQL injection
@@ -263,7 +270,7 @@ impl Database for Sqlite {
         &self,
         from: chrono::DateTime<Utc>,
         to: chrono::DateTime<Utc>,
-    ) -> Result<Vec<HistoryItem>> {
+    ) -> Result<Vec<HistoryItem>, sqlx::Error> {
         debug!("listing history from {:?} to {:?}", from, to);
 
         let res = sqlx::query(
@@ -278,7 +285,7 @@ impl Database for Sqlite {
         Ok(res)
     }
 
-    async fn first(&self) -> Result<HistoryItem> {
+    async fn first(&self) -> Result<HistoryItem, sqlx::Error> {
         let res = sqlx::query(
             "select * from history_items where duration >= 0 order by timestamp asc limit 1",
         )
@@ -289,7 +296,7 @@ impl Database for Sqlite {
         Ok(res)
     }
 
-    async fn last(&self) -> Result<HistoryItem> {
+    async fn last(&self) -> Result<HistoryItem, sqlx::Error> {
         let res = sqlx::query(
             "select * from history_items where duration >= 0 order by timestamp desc limit 1",
         )
@@ -304,7 +311,7 @@ impl Database for Sqlite {
         &self,
         timestamp: chrono::DateTime<Utc>,
         count: i64,
-    ) -> Result<Vec<HistoryItem>> {
+    ) -> Result<Vec<HistoryItem>, sqlx::Error> {
         let res = sqlx::query(
             "select * from history_items where timestamp < ?1 order by timestamp desc limit ?2",
         )
@@ -317,7 +324,7 @@ impl Database for Sqlite {
         Ok(res)
     }
 
-    async fn history_count(&self) -> Result<i64> {
+    async fn history_count(&self) -> Result<i64, sqlx::Error> {
         let res: (i64,) = sqlx::query_as("select count(1) from history_items")
             .fetch_one(&self.pool)
             .await?;
@@ -330,7 +337,7 @@ impl Database for Sqlite {
         limit: Option<i64>,
         search_mode: SearchMode,
         query: &str,
-    ) -> Result<Vec<HistoryItem>> {
+    ) -> Result<Vec<HistoryItem>, sqlx::Error> {
         let query = query.to_string().replace("*", "%"); // allow wildcard char
         let limit = limit.map_or("".to_owned(), |l| format!("limit {}", l));
 
@@ -361,12 +368,21 @@ impl Database for Sqlite {
         Ok(res)
     }
 
-    async fn query_history(&self, query: &str) -> Result<Vec<HistoryItem>> {
+    async fn query_history(&self, query: &str) -> Result<Vec<HistoryItem>, sqlx::Error> {
         let res = sqlx::query(query)
             .map(Self::query_history)
             .fetch_all(&self.pool)
             .await?;
 
+        Ok(res)
+    }
+
+    async fn delete_history_item(&self, id: i64) -> Result<u64, sqlx::Error> {
+        let res = sqlx::query("delete from history_items where history_id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?
+            .rows_affected();
         Ok(res)
     }
 }

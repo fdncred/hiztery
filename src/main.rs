@@ -4,20 +4,25 @@
 pub mod database;
 pub mod history_item;
 
-use std::io::{BufReader, Read};
+use std::io::{self, BufReader, Read};
 use std::{fs::File, path::PathBuf};
 // use async_std::io::BufReader;
-use chrono::Local;
+// use chrono::Local;
 use database::{Database, SearchMode, Sqlite};
 use log::debug;
 use simplelog::*;
 // use eyre::Result;
 use crate::history_item::HistoryItem;
-use sqlx::sqlite::SqlitePool;
+use lazy_static::lazy_static;
+// use sqlx::sqlite::SqlitePool;
 use std::convert::TryInto;
 use std::io::BufRead;
 use std::io::{Seek, SeekFrom};
 use structopt::StructOpt;
+
+lazy_static! {
+    static ref PID: i64 = std::process::id().into();
+}
 
 #[derive(StructOpt)]
 struct Args {
@@ -37,8 +42,8 @@ enum HizteryCmd {
     Update {
         #[structopt(short = "i", long = "id")]
         history_id: i64,
-        #[structopt(short = "u", long = "update_text")]
-        history_item: String,
+        // #[structopt(short = "u", long = "update_text")]
+        // history_item: String,
     },
     Delete {
         #[structopt(short = "i", long = "id")]
@@ -96,7 +101,7 @@ async fn main(args: Args) -> anyhow::Result<()> {
     Ok(results)
 }
 
-async fn second_attempt(args: Args) -> anyhow::Result<()> {
+async fn second_attempt(args: Args) -> Result<(), sqlx::Error> {
     debug!("starting second_attempt");
     // let pool = SqlitePool::connect("sqlite:hiztery.db?mode=rwc").await?;
     // initialize_db(&pool).await?;
@@ -106,64 +111,63 @@ async fn second_attempt(args: Args) -> anyhow::Result<()> {
     // let sqlite = Sqlite::new(db_path).await?;
     let mut sqlite = match Sqlite::new(db_path).await {
         Ok(r) => r,
-        Err(e) => anyhow::bail!("unexpected error: {}", e),
+        // Err(e) => anyhow::bail!("unexpected error: {}", e),
+        Err(e) => return Err(e),
     };
 
     match args.cmd {
-        // cargo run -- insert "some history message" 5
         Some(HizteryCmd::Insert {
             history_item,
             rows_to_insert,
         }) => {
+            // cargo run -- insert --text "happy birthday" --rows_to_insert 5
             debug!("Insert with {} {}", &history_item, rows_to_insert);
-            // for row in 0..rows_to_insert {
-            //     let hist_item_clone = history_item.clone();
-            //     let start_time = Local::now();
-            //     // println!("formatting time");
-            //     let formatted_start_time = start_time.format("%Y-%m-%d %H:%M:%S").to_string();
-            //     // println!("running add_bogus_entry");
-            //     let history_id =
-            //         insert_history_item(&pool, row + 100, &hist_item_clone, formatted_start_time)
-            //             .await?;
-            //     // println!("calculating end time");
-            //     let end_time = Local::now();
-            //     // println!("calculating duration");
-            //     let insert_time_ms = if let Some(time) = (end_time - start_time).num_microseconds()
-            //     {
-            //         time as f64 / 1000.0 as f64
-            //     } else {
-            //         0.0 as f64
-            //     };
-            //     print!(
-            //         "Insert new history item: [{}] with id: [{:?}] in: [{}] ms.",
-            //         &hist_item_clone, history_id, insert_time_ms
-            //     );
-            //     let perf_update_id = insert_perf_with(&pool, history_id, insert_time_ms).await?;
-            //     println!(
-            //         " Successfully updated perf table with id: [{}] perf: [{}].",
-            //         perf_update_id, insert_time_ms
-            //     );
-            // }
+            for row in 0..rows_to_insert {
+                let hi = HistoryItem::new(
+                    None,
+                    history_item.clone(),
+                    "i_give_up".to_string(),
+                    0,
+                    0,
+                    Some(*PID),
+                    chrono::Utc::now(),
+                );
+
+                let result = sqlite.save(&hi).await;
+                match result {
+                    Ok(r) => r,
+                    Err(e) => return Err(e),
+                }
+            }
         }
         Some(HizteryCmd::Update {
             history_id,
-            history_item,
+            // history_item,
         }) => {
-            debug!("Update with id: {} item: {}", history_id, &history_item);
-            // // cargo run -- update 1 "some string"
-            // println!(
-            //     "Updating history_id: [{}] with history_item: [{}]",
-            //     history_id, history_item
-            // );
-            // let row = update_history_item(&pool, history_id, history_item).await?;
-            // println!("Updated row: [{}]", row);
+            // cargo run -- update -i 1
+            debug!("Update with id: {}", history_id);
+            let hi = HistoryItem::new(
+                Some(history_id),
+                "some | updated | command".to_string(),
+                "i_updated".to_string(),
+                1,
+                0,
+                Some(*PID),
+                chrono::Utc::now(),
+            );
+
+            let result = sqlite.update(&hi).await;
+            match result {
+                Ok(r) => r,
+                Err(e) => return Err(e),
+            }
         }
         Some(HizteryCmd::Delete { history_id }) => {
+            // cargo run -- delete -i 3
             debug!("Delete with id: {}", history_id);
-            // // cargo run -- delete 3
-            // println!("Deleting history item: [{}]", history_id);
-            // let res = delete_history_item(&pool, history_id).await?;
-            // println!("Deleted row count: [{}]", res);
+            println!("Deleting history item: [{}]", history_id);
+            let res = sqlite.delete_history_item(history_id).await?;
+            println!("Deleted row count: [{}]", res);
         }
         Some(HizteryCmd::Select {}) | None => {
             debug!("Select");
@@ -223,6 +227,7 @@ async fn second_attempt(args: Args) -> anyhow::Result<()> {
             limit,
             query,
         }) => {
+            // cargo run -- search -m "p" -q "code"
             debug!(
                 "Searching with phrase: {}, limit: {:?}, mode: {}",
                 &query, limit, &search_mode
@@ -250,216 +255,222 @@ async fn second_attempt(args: Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn count_lines(buf: &mut BufReader<impl Read + Seek>) -> anyhow::Result<usize> {
+fn count_lines(buf: &mut BufReader<impl Read + Seek>) -> Result<usize, io::Error> {
     let lines = buf.lines().count();
     buf.seek(SeekFrom::Start(0))?;
 
     Ok(lines)
 }
 
-async fn first_attempt(args: Args) -> anyhow::Result<()> {
-    // Get the pid
-    // let pid = process::id();
+////////////////////////////////////////////////////////////////
+// everything below here is a hand-cranked test that works great
+// i just switched to using the atuin trait/impl to make things
+// easier for implementers
+////////////////////////////////////////////////////////////////
 
-    // let db_url = env::var("DATABASE_URL").unwrap_or("sqlite:hiztery.db?mode=rwc".to_string());
-    // let pool = SqlitePool::connect(&db_url).await?;
-    let pool = SqlitePool::connect("sqlite:hiztery.db?mode=rwc").await?;
-    initialize_db(&pool).await?;
+// async fn first_attempt(args: Args) -> anyhow::Result<()> {
+//     // Get the pid
+//     // let pid = process::id();
 
-    match args.cmd {
-        // cargo run -- insert "some history message" 5
-        Some(HizteryCmd::Insert {
-            history_item,
-            rows_to_insert,
-        }) => {
-            for row in 0..rows_to_insert {
-                let hist_item_clone = history_item.clone();
-                let start_time = Local::now();
-                // println!("formatting time");
-                let formatted_start_time = start_time.format("%Y-%m-%d %H:%M:%S").to_string();
-                // println!("running add_bogus_entry");
-                let history_id =
-                    insert_history_item(&pool, row + 100, &hist_item_clone, formatted_start_time)
-                        .await?;
-                // println!("calculating end time");
-                let end_time = Local::now();
-                // println!("calculating duration");
-                let insert_time_ms = if let Some(time) = (end_time - start_time).num_microseconds()
-                {
-                    time as f64 / 1000.0 as f64
-                } else {
-                    0.0 as f64
-                };
-                print!(
-                    "Insert new history item: [{}] with id: [{:?}] in: [{}] ms.",
-                    &hist_item_clone, history_id, insert_time_ms
-                );
-                let perf_update_id = insert_perf_with(&pool, history_id, insert_time_ms).await?;
-                println!(
-                    " Successfully updated perf table with id: [{}] perf: [{}].",
-                    perf_update_id, insert_time_ms
-                );
-            }
-        }
-        Some(HizteryCmd::Update {
-            history_id,
-            history_item,
-        }) => {
-            // cargo run -- update 1 "some string"
-            println!(
-                "Updating history_id: [{}] with history_item: [{}]",
-                history_id, history_item
-            );
-            let row = update_history_item(&pool, history_id, history_item).await?;
-            println!("Updated row: [{}]", row);
-        }
-        Some(HizteryCmd::Delete { history_id }) => {
-            // cargo run -- delete 3
-            println!("Deleting history item: [{}]", history_id);
-            let res = delete_history_item(&pool, history_id).await?;
-            println!("Deleted row count: [{}]", res);
-        }
-        Some(HizteryCmd::Select {}) | None => {
-            // cargo run -- select
-            println!("List of top 5 history items");
-            let output = select_star(&pool).await?;
-            let mut count = 0;
-            for x in output {
-                if count > 5 {
-                    break;
-                } else {
-                    println!("ItemNum: [{}] Row: [{:?}]", count, x);
-                    count += 1;
-                }
-            }
-        }
-        Some(HizteryCmd::Import {
-            nushell_history_filepath,
-        }) => {}
-        Some(HizteryCmd::Search {
-            limit,
-            query,
-            search_mode,
-        }) => {}
-    }
+//     // let db_url = env::var("DATABASE_URL").unwrap_or("sqlite:hiztery.db?mode=rwc".to_string());
+//     // let pool = SqlitePool::connect(&db_url).await?;
+//     let pool = SqlitePool::connect("sqlite:hiztery.db?mode=rwc").await?;
+//     initialize_db(&pool).await?;
 
-    Ok(())
-}
+//     match args.cmd {
+//         // cargo run -- insert "some history message" 5
+//         Some(HizteryCmd::Insert {
+//             history_item,
+//             rows_to_insert,
+//         }) => {
+//             for row in 0..rows_to_insert {
+//                 let hist_item_clone = history_item.clone();
+//                 let start_time = Local::now();
+//                 // println!("formatting time");
+//                 let formatted_start_time = start_time.format("%Y-%m-%d %H:%M:%S").to_string();
+//                 // println!("running add_bogus_entry");
+//                 let history_id =
+//                     insert_history_item(&pool, row + 100, &hist_item_clone, formatted_start_time)
+//                         .await?;
+//                 // println!("calculating end time");
+//                 let end_time = Local::now();
+//                 // println!("calculating duration");
+//                 let insert_time_ms = if let Some(time) = (end_time - start_time).num_microseconds()
+//                 {
+//                     time as f64 / 1000.0 as f64
+//                 } else {
+//                     0.0 as f64
+//                 };
+//                 print!(
+//                     "Insert new history item: [{}] with id: [{:?}] in: [{}] ms.",
+//                     &hist_item_clone, history_id, insert_time_ms
+//                 );
+//                 let perf_update_id = insert_perf_with(&pool, history_id, insert_time_ms).await?;
+//                 println!(
+//                     " Successfully updated perf table with id: [{}] perf: [{}].",
+//                     perf_update_id, insert_time_ms
+//                 );
+//             }
+//         }
+//         Some(HizteryCmd::Update {
+//             history_id,
+//             // history_item,
+//         }) => {
+//             // cargo run -- update 1 "some string"
+//             println!(
+//                 "Updating history_id: [{}] with history_item: [{}]",
+//                 history_id, history_item
+//             );
+//             let row = update_history_item(&pool, history_id, history_item).await?;
+//             println!("Updated row: [{}]", row);
+//         }
+//         Some(HizteryCmd::Delete { history_id }) => {
+//             // cargo run -- delete 3
+//             println!("Deleting history item: [{}]", history_id);
+//             let res = delete_history_item(&pool, history_id).await?;
+//             println!("Deleted row count: [{}]", res);
+//         }
+//         Some(HizteryCmd::Select {}) | None => {
+//             // cargo run -- select
+//             println!("List of top 5 history items");
+//             let output = select_star(&pool).await?;
+//             let mut count = 0;
+//             for x in output {
+//                 if count > 5 {
+//                     break;
+//                 } else {
+//                     println!("ItemNum: [{}] Row: [{:?}]", count, x);
+//                     count += 1;
+//                 }
+//             }
+//         }
+//         Some(HizteryCmd::Import {
+//             nushell_history_filepath,
+//         }) => {}
+//         Some(HizteryCmd::Search {
+//             limit,
+//             query,
+//             search_mode,
+//         }) => {}
+//     }
 
-async fn delete_history_item(pool: &SqlitePool, id: i64) -> anyhow::Result<u64> {
-    let mut conn = pool.acquire().await?;
+//     Ok(())
+// }
 
-    let query = format!("DELETE FROM history WHERE history_id = '{}';", id);
+// async fn delete_history_item(pool: &SqlitePool, id: i64) -> anyhow::Result<u64> {
+//     let mut conn = pool.acquire().await?;
 
-    let res = sqlx::query(&query)
-        .execute(&mut conn)
-        .await?
-        .rows_affected();
+//     let query = format!("DELETE FROM history WHERE history_id = '{}';", id);
 
-    Ok(res)
-}
+//     let res = sqlx::query(&query)
+//         .execute(&mut conn)
+//         .await?
+//         .rows_affected();
 
-async fn update_history_item(pool: &SqlitePool, id: i64, text: String) -> anyhow::Result<u64> {
-    let mut conn = pool.acquire().await?;
+//     Ok(res)
+// }
 
-    let query = format!(
-        "UPDATE history SET (history_item) = '{}' WHERE history_id = {}",
-        text, id
-    );
+// async fn update_history_item(pool: &SqlitePool, id: i64, text: String) -> anyhow::Result<u64> {
+//     let mut conn = pool.acquire().await?;
 
-    let res = sqlx::query(&query)
-        .execute(&mut conn)
-        .await?
-        .rows_affected();
+//     let query = format!(
+//         "UPDATE history SET (history_item) = '{}' WHERE history_id = {}",
+//         text, id
+//     );
 
-    Ok(res)
-}
+//     let res = sqlx::query(&query)
+//         .execute(&mut conn)
+//         .await?
+//         .rows_affected();
 
-async fn select_star(pool: &SqlitePool) -> anyhow::Result<Vec<HistoryTable>> {
-    let mut conn = pool.acquire().await?;
+//     Ok(res)
+// }
 
-    let query = r#"
-    SELECT history_id,  session_id,  history_item,  datetime,  executions
-    FROM history;
-    "#;
+// async fn select_star(pool: &SqlitePool) -> anyhow::Result<Vec<HistoryTable>> {
+//     let mut conn = pool.acquire().await?;
 
-    // let query_output: Vec<HistoryTable> = sqlx::query_as!(HistoryTable, "select * from history")
-    //     .fetch_all(&mut conn)
-    //     .await?;
+//     let query = r#"
+//     SELECT history_id,  session_id,  history_item,  datetime,  executions
+//     FROM history;
+//     "#;
 
-    let query_output: Vec<HistoryTable> = sqlx::query_as(&query).fetch_all(&mut conn).await?;
-    Ok(query_output)
-}
+//     // let query_output: Vec<HistoryTable> = sqlx::query_as!(HistoryTable, "select * from history")
+//     //     .fetch_all(&mut conn)
+//     //     .await?;
 
-async fn initialize_db(pool: &SqlitePool) -> anyhow::Result<bool> {
-    let history_table = r#"
-    CREATE TABLE IF NOT EXISTS "history"
-    (
-        "history_id"      INTEGER PRIMARY KEY NOT NULL,
-        "session_id"      INTEGER             NOT NULL,
-        "history_item"    TEXT                NOT NULL,
-        "datetime"        TEXT                NOT NULL,
-        "executions"      INTEGER             NOT NULL
-    );
-    "#;
+//     let query_output: Vec<HistoryTable> = sqlx::query_as(&query).fetch_all(&mut conn).await?;
+//     Ok(query_output)
+// }
 
-    let performance_table = r#"
-    CREATE TABLE IF NOT EXISTS "performance" (
-        "perf_id"     INTEGER NOT NULL PRIMARY KEY,
-        "metrics"     FLOAT NOT NULL,
-        "history_id"  INTEGER NOT NULL
-        REFERENCES "history"(history_id) ON DELETE CASCADE ON UPDATE CASCADE
-      );
-    "#;
+// async fn initialize_db(pool: &SqlitePool) -> anyhow::Result<bool> {
+//     let history_table = r#"
+//     CREATE TABLE IF NOT EXISTS "history"
+//     (
+//         "history_id"      INTEGER PRIMARY KEY NOT NULL,
+//         "session_id"      INTEGER             NOT NULL,
+//         "history_item"    TEXT                NOT NULL,
+//         "datetime"        TEXT                NOT NULL,
+//         "executions"      INTEGER             NOT NULL
+//     );
+//     "#;
 
-    let mut conn = pool.acquire().await?;
-    sqlx::query(history_table).execute(&mut conn).await?;
-    sqlx::query(performance_table).execute(&mut conn).await?;
+//     let performance_table = r#"
+//     CREATE TABLE IF NOT EXISTS "performance" (
+//         "perf_id"     INTEGER NOT NULL PRIMARY KEY,
+//         "metrics"     FLOAT NOT NULL,
+//         "history_id"  INTEGER NOT NULL
+//         REFERENCES "history"(history_id) ON DELETE CASCADE ON UPDATE CASCADE
+//       );
+//     "#;
 
-    Ok(true)
-}
+//     let mut conn = pool.acquire().await?;
+//     sqlx::query(history_table).execute(&mut conn).await?;
+//     sqlx::query(performance_table).execute(&mut conn).await?;
 
-async fn insert_perf_with(
-    pool: &SqlitePool,
-    history_id: i64,
-    insert_ms: f64,
-) -> anyhow::Result<i64> {
-    let mut conn = pool.acquire().await?;
+//     Ok(true)
+// }
 
-    // println!("creating query");
-    let query = format!(
-        "INSERT INTO performance (metrics, history_id) VALUES ({}, {})",
-        insert_ms, history_id
-    );
-    // println!("executing query '{}'", &query);
-    let id = sqlx::query(&query)
-        .execute(&mut conn)
-        .await?
-        .last_insert_rowid();
+// async fn insert_perf_with(
+//     pool: &SqlitePool,
+//     history_id: i64,
+//     insert_ms: f64,
+// ) -> anyhow::Result<i64> {
+//     let mut conn = pool.acquire().await?;
 
-    Ok(id)
-}
+//     // println!("creating query");
+//     let query = format!(
+//         "INSERT INTO performance (metrics, history_id) VALUES ({}, {})",
+//         insert_ms, history_id
+//     );
+//     // println!("executing query '{}'", &query);
+//     let id = sqlx::query(&query)
+//         .execute(&mut conn)
+//         .await?
+//         .last_insert_rowid();
 
-async fn insert_history_item(
-    pool: &SqlitePool,
-    session_id: i64,
-    history_item: &String,
-    time_str: String,
-) -> anyhow::Result<i64> {
-    let mut conn = pool.acquire().await?;
+//     Ok(id)
+// }
 
-    // println!("creating query");
-    let query = format!(
-        "INSERT INTO history (session_id, history_item, datetime, executions) VALUES ({}, '{}', '{}', 1)",
-        session_id, history_item, time_str
-    );
-    // println!("executing query {}", &query);
-    let id = sqlx::query(&query)
-        .execute(&mut conn)
-        .await?
-        .last_insert_rowid();
+// async fn insert_history_item(
+//     pool: &SqlitePool,
+//     session_id: i64,
+//     history_item: &String,
+//     time_str: String,
+// ) -> anyhow::Result<i64> {
+//     let mut conn = pool.acquire().await?;
 
-    // println!("returning id {}", id);
+//     // println!("creating query");
+//     let query = format!(
+//         "INSERT INTO history (session_id, history_item, datetime, executions) VALUES ({}, '{}', '{}', 1)",
+//         session_id, history_item, time_str
+//     );
+//     // println!("executing query {}", &query);
+//     let id = sqlx::query(&query)
+//         .execute(&mut conn)
+//         .await?
+//         .last_insert_rowid();
 
-    Ok(id)
-}
+//     // println!("returning id {}", id);
+
+//     Ok(id)
+// }
