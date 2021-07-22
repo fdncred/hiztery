@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use chrono::prelude::{DateTime, TimeZone};
 use chrono::Utc;
 use eyre::Result;
+use itertools::Itertools;
 use log::debug;
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteRow,
@@ -336,7 +337,7 @@ impl Database for Sqlite {
         let query = match search_mode {
             SearchMode::Prefix => query,
             SearchMode::FullText => format!("%{}", query),
-            // SearchMode::Fuzzy => query.split("").join("%"),
+            SearchMode::Fuzzy => query.split("").join("%"),
         };
 
         let res = sqlx::query(
@@ -377,6 +378,9 @@ pub enum SearchMode {
 
     // #[serde(rename = "fulltext")]
     FullText,
+
+    // #[serde(rename = "fuzzy")]
+    Fuzzy,
 }
 
 #[cfg(test)]

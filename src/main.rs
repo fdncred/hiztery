@@ -54,8 +54,8 @@ enum HizteryCmd {
         search_mode: String,
         #[structopt(short = "l", long = "limit")]
         limit: Option<i64>,
-        #[structopt(short = "p", long = "phrase")]
-        phrase: String,
+        #[structopt(short = "q", long = "query")]
+        query: String,
     },
 }
 
@@ -221,27 +221,28 @@ async fn second_attempt(args: Args) -> anyhow::Result<()> {
         Some(HizteryCmd::Search {
             search_mode,
             limit,
-            phrase,
+            query,
         }) => {
             debug!(
                 "Searching with phrase: {}, limit: {:?}, mode: {}",
-                &phrase, limit, &search_mode
+                &query, limit, &search_mode
             );
             let s_mode = match search_mode.as_ref() {
                 "p" => SearchMode::Prefix,
                 "f" => SearchMode::FullText,
+                "z" => SearchMode::Fuzzy,
                 _ => SearchMode::FullText,
             };
 
-            let result = sqlite.search(limit, s_mode, &phrase).await;
+            let result = sqlite.search(limit, s_mode, &query).await;
             match result {
                 Ok(r) => {
                     println!("Found {} hits", r.len());
                     for (idx, hit) in r.iter().enumerate() {
-                        println!("Hit # {} History: {:?}", idx + 1, hit);
+                        println!("Hit # [{}] History: [{}]", idx + 1, hit.command);
                     }
                 }
-                _ => println!("No hits found for phrase: {}", &phrase),
+                _ => println!("No hits found for phrase: {}", &query),
             }
         }
     }
@@ -337,7 +338,7 @@ async fn first_attempt(args: Args) -> anyhow::Result<()> {
         }) => {}
         Some(HizteryCmd::Search {
             limit,
-            phrase,
+            query,
             search_mode,
         }) => {}
     }
