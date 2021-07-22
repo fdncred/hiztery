@@ -1,6 +1,6 @@
 use crate::history_item::HistoryItem;
 use async_trait::async_trait;
-use chrono::prelude::*;
+use chrono::prelude::{DateTime, TimeZone};
 use chrono::Utc;
 use eyre::Result;
 use log::debug;
@@ -126,6 +126,26 @@ impl Sqlite {
         .await?;
 
         Ok(())
+    }
+
+    fn convert_time(h: &HistoryItem) {
+        // example of how to convert timestamp_nanos() to regular time
+        // use chrono::prelude::DateTime;
+        // use chrono::Utc;
+        use std::time::{Duration, UNIX_EPOCH};
+
+        // Creates a new SystemTime from the specified number of whole seconds
+        let d = UNIX_EPOCH + Duration::from_nanos(1626813332831940400);
+        // Create DateTime from SystemTime
+        let datetime = DateTime::<Utc>::from(d);
+
+        // I'm not sure there's a way to confidently split up a timestamp
+        // let dt = NaiveDateTime::from_timestamp(1626813332, 831940400);
+        // println!("NDT {}", dt.format("%Y-%m-%d %H:%M:%S.%f").to_string());
+
+        // Formats the combined date and time with the specified format string.
+        let timestamp_str = datetime.format("%Y-%m-%d %H:%M:%S.%f").to_string();
+        println! {"{}",timestamp_str};
     }
 
     fn query_history(row: SqliteRow) -> HistoryItem {
