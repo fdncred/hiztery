@@ -4,20 +4,17 @@
 pub mod database;
 pub mod history_item;
 
-use std::io::{self, BufReader, Read};
-use std::{fs::File, path::PathBuf};
-// use async_std::io::BufReader;
-// use chrono::Local;
+use crate::history_item::HistoryItem;
+use chrono::{DateTime, NaiveDate};
 use database::{Database, SearchMode, Sqlite};
+use lazy_static::lazy_static;
 use log::debug;
 use simplelog::*;
-// use eyre::Result;
-use crate::history_item::HistoryItem;
-use lazy_static::lazy_static;
-// use sqlx::sqlite::SqlitePool;
 use std::convert::TryInto;
 use std::io::BufRead;
+use std::io::{self, BufReader, Read};
 use std::io::{Seek, SeekFrom};
+use std::{fs::File, path::PathBuf};
 use structopt::StructOpt;
 
 lazy_static! {
@@ -49,7 +46,12 @@ enum HizteryCmd {
         #[structopt(short = "i", long = "id")]
         history_id: i64,
     },
-    Select {},
+    Select {
+        #[structopt(short = "m", long = "max")]
+        max: Option<usize>,
+        #[structopt(short = "u", long = "unique")]
+        unique: bool,
+    },
     Import {
         #[structopt(short = "f", long = "file", name = "file path")]
         nushell_history_filepath: String,
@@ -62,6 +64,26 @@ enum HizteryCmd {
         #[structopt(short = "q", long = "query")]
         query: String,
     },
+    Count {},
+    Last {},
+    First {},
+    Load {
+        #[structopt(short = "i", long = "id")]
+        id: String,
+    },
+    Range {
+        #[structopt(short = "f", long = "from")]
+        from_date: String,
+        #[structopt(short = "t", long = "to")]
+        to_date: String,
+    },
+    Before {
+        #[structopt(short = "f", long = "from")]
+        from_date: String,
+        #[structopt(short = "c", long = "count")]
+        count: i64,
+    },
+    All {},
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -133,11 +155,11 @@ async fn second_attempt(args: Args) -> Result<(), sqlx::Error> {
                     chrono::Utc::now(),
                 );
 
-                let result = sqlite.save(&hi).await;
-                match result {
-                    Ok(r) => r,
-                    Err(e) => return Err(e),
-                }
+                let result = sqlite.save(&hi).await?;
+                // match result {
+                //     Ok(r) => r,
+                //     Err(e) => return Err(e),
+                // }
             }
         }
         Some(HizteryCmd::Update {
@@ -156,33 +178,25 @@ async fn second_attempt(args: Args) -> Result<(), sqlx::Error> {
                 chrono::Utc::now(),
             );
 
-            let result = sqlite.update(&hi).await;
-            match result {
-                Ok(r) => r,
-                Err(e) => return Err(e),
-            }
+            let result = sqlite.update(&hi).await?;
+            // match result {
+            //     Ok(r) => r,
+            //     Err(e) => return Err(e),
+            // }
         }
         Some(HizteryCmd::Delete { history_id }) => {
             // cargo run -- delete -i 3
-            debug!("Delete with id: {}", history_id);
-            println!("Deleting history item: [{}]", history_id);
+            debug!("Deleting history item: [{}]", history_id);
             let res = sqlite.delete_history_item(history_id).await?;
-            println!("Deleted row count: [{}]", res);
+            debug!("Deleted row count: [{}]", res);
         }
-        Some(HizteryCmd::Select {}) | None => {
-            debug!("Select");
-            // // cargo run -- select
-            // println!("List of top 5 history items");
-            // let output = select_star(&pool).await?;
-            // let mut count = 0;
-            // for x in output {
-            //     if count > 5 {
-            //         break;
-            //     } else {
-            //         println!("ItemNum: [{}] Row: [{:?}]", count, x);
-            //         count += 1;
-            //     }
-            // }
+        Some(HizteryCmd::Select { max, unique }) => {
+            // cargo run -- select -m 5 -u
+            debug!("Selecting max: [{:?}] with unique: [{}]", max, unique);
+            let output = sqlite.list(max, unique).await?;
+            for (idx, item) in output.iter().enumerate() {
+                debug!("ItemNum: [{}] Row: [{:?}]", idx, item);
+            }
         }
         Some(HizteryCmd::Import {
             nushell_history_filepath,
@@ -215,11 +229,12 @@ async fn second_attempt(args: Args) -> Result<(), sqlx::Error> {
             }
 
             debug!("Preparing for save_bulk");
-            let result = sqlite.save_bulk(&history_vec).await;
-            let cnt = match sqlite.history_count().await {
-                Ok(c) => c,
-                _ => 0i64,
-            };
+            let result = sqlite.save_bulk(&history_vec).await?;
+            let cnt = sqlite.history_count().await?;
+            //  {
+            //     Ok(c) => c,
+            //     _ => 0i64,
+            // };
             debug!("Imported [{}] history entries", cnt);
         }
         Some(HizteryCmd::Search {
@@ -242,14 +257,80 @@ async fn second_attempt(args: Args) -> Result<(), sqlx::Error> {
             let result = sqlite.search(limit, s_mode, &query).await;
             match result {
                 Ok(r) => {
-                    println!("Found {} hits", r.len());
+                    debug!("Found {} hits", r.len());
                     for (idx, hit) in r.iter().enumerate() {
-                        println!("Hit # [{}] History: [{}]", idx + 1, hit.command);
+                        debug!("Hit # [{}] History: [{}]", idx + 1, hit.command);
                     }
                 }
-                _ => println!("No hits found for phrase: {}", &query),
+                _ => debug!("No hits found for phrase: {}", &query),
             }
         }
+        Some(HizteryCmd::Count {}) => {
+            // cargo run -- count
+            debug!("Counting history items.");
+            let result = sqlite.history_count().await?;
+            debug!("Found [{}] history items.", result);
+        }
+        Some(HizteryCmd::Last {}) => {
+            // cargo run -- last
+            debug!("Looking for the last history item.");
+            let result = sqlite.last().await?;
+            debug!("Found [{:?}] history items.", result);
+        }
+        Some(HizteryCmd::First {}) => {
+            // cargo run -- first
+            debug!("Looking for the first history item.");
+            let result = sqlite.first().await?;
+            debug!("Found [{:?}] history items.", result);
+        }
+        Some(HizteryCmd::Load { id }) => {
+            // cargo run -- load -i 2800
+            debug!("Looking for history item [{}].", &id);
+            let result = sqlite.load(&id).await?;
+            debug!("Found [{:?}] history items.", result);
+        }
+        Some(HizteryCmd::Range { from_date, to_date }) => {
+            // cargo run -- range -f "2021-07-21" -t "2021-07-25"
+            debug!(
+                "Looking for history item between [{}] and [{}].",
+                &from_date, &to_date
+            );
+            let f = NaiveDate::parse_from_str(&from_date, "%Y-%m-%d").unwrap();
+            let t = NaiveDate::parse_from_str(&to_date, "%Y-%m-%d").unwrap();
+            let f_utc = DateTime::<chrono::Utc>::from_utc(f.and_hms(0, 0, 0), chrono::Utc);
+            let t_utc = DateTime::<chrono::Utc>::from_utc(t.and_hms(0, 0, 0), chrono::Utc);
+            let result = sqlite.range(f_utc, t_utc).await?;
+
+            debug!("Found {} hits", result.len());
+            for (idx, hit) in result.iter().enumerate() {
+                debug!("Hit # [{}] History: [{:?}]", idx + 1, hit);
+            }
+        }
+        Some(HizteryCmd::Before { from_date, count }) => {
+            // cargo run -- before -f "2021-07-21" -c 25
+            debug!(
+                "Looking for history item after [{}] with max [{}].",
+                &from_date, count,
+            );
+            let f = NaiveDate::parse_from_str(&from_date, "%Y-%m-%d").unwrap();
+            let f_utc = DateTime::<chrono::Utc>::from_utc(f.and_hms(0, 0, 0), chrono::Utc);
+            let result = sqlite.before(f_utc, count).await?;
+
+            debug!("Found {} hits", result.len());
+            for (idx, hit) in result.iter().enumerate() {
+                debug!("Hit # [{}] History: [{:?}]", idx + 1, hit);
+            }
+        }
+        Some(HizteryCmd::All {}) => {
+            // cargo run -- last
+            debug!("Looking for all the history items.");
+            let result = sqlite.query_history("select * from history_items").await?;
+            debug!("Found {} hits", result.len());
+            for (idx, hit) in result.iter().enumerate() {
+                debug!("Hit # [{}] History: [{:?}]", idx + 1, hit);
+            }
+        }
+        None => {}
     }
 
     Ok(())

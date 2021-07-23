@@ -2,7 +2,6 @@ use crate::history_item::HistoryItem;
 use async_trait::async_trait;
 use chrono::prelude::{DateTime, TimeZone};
 use chrono::Utc;
-// use eyre::Result;
 use itertools::Itertools;
 use log::debug;
 use sqlx::sqlite::{
@@ -43,8 +42,6 @@ pub trait Database {
     async fn delete_history_item(&self, id: i64) -> Result<u64, sqlx::Error>;
 }
 
-// Intended for use on a developer machine and not a sync server.
-// TODO: implement IntoIterator
 pub struct Sqlite {
     pool: SqlitePool,
 }
@@ -77,6 +74,10 @@ impl Sqlite {
 
         // sqlx::migrate!("./migrations").run(pool).await?;
 
+        //TODO: add run_count
+        //TODO: maybe change command to command_line and then
+        // add command with only the command and parameters as
+        // a separate column in order to do interesting queries
         let history_table = r#"
         CREATE TABLE IF NOT EXISTS history_items (
             history_id   INTEGER PRIMARY KEY NOT NULL,
@@ -193,7 +194,7 @@ impl Database for Sqlite {
     async fn load(&self, id: &str) -> Result<HistoryItem, sqlx::Error> {
         debug!("loading history item {}", id);
 
-        let res = sqlx::query("select * from history_items where id = ?1")
+        let res = sqlx::query("select * from history_items where history_id = ?1")
             .bind(id)
             .map(Self::query_history)
             .fetch_one(&self.pool)
@@ -245,7 +246,7 @@ impl Database for Sqlite {
             if unique {
                 "where timestamp = (
                         select max(timestamp) from history_items
-                        where h.command = history.command
+                        where h.command = history_items.command
                     )"
             } else {
                 ""
@@ -276,8 +277,8 @@ impl Database for Sqlite {
         let res = sqlx::query(
             "select * from history_items where timestamp >= ?1 and timestamp <= ?2 order by timestamp asc",
         )
-        .bind(from)
-        .bind(to)
+        .bind(from.timestamp_nanos())
+        .bind(to.timestamp_nanos())
             .map(Self::query_history)
         .fetch_all(&self.pool)
         .await?;
