@@ -8,17 +8,17 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1.0"
-async-std = { version = "1.8.0", features = [ "attributes" ] }
+async-std = { version = "1.12.0", features = [ "attributes" ] }
 futures = "0.3"
 paw = "1.0"
-async-trait = "0.1.50"
-sqlx = { version = "0.5.5", features = ["sqlite", "chrono"] }
+async-trait = "0.1.64"
+sqlx = { version = "0.6.2", features = ["sqlite", "chrono"] }
 structopt = { version = "0.3", features = ["paw"] }
-sqlx-macros = "0.5.5"
+sqlx-macros = "0.6.2"
 # chrono = { version = "0.4.19", features = ["serde"] }
-chrono = "0.4.19"
-log = "0.4.14"
+chrono = "0.4.23"
+log = "0.4.17"
 # eyre = "0.6.5"
-simplelog = "0.10.0"
-itertools = "0.10.1"
+simplelog = "0.12.0"
+itertools = "0.10.5"
 lazy_static = "1.4.0"
